@@ -281,7 +281,7 @@ class BasketLogicMixin:
             # template overrides can make use of them.
             course_data['course_start'] = self._deserialize_date(course.get('start'))
             course_data['course_end'] = self._deserialize_date(course.get('end'))
-        except (ReqConnectionError, SlumberBaseException, Timeout):
+        except (ReqConnectionError, SlumberBaseException, Timeout) as e:
             logger.exception(
                 'Failed to retrieve data from Discovery Service for course [%s].',
                 course_data['course_key'],

@@ -102,7 +102,7 @@ class CatalogViewSet(NestedViewSetMixin, ReadOnlyModelViewSet):
         ["results": {"id": 1, "name": "Dummy Catalog"}]
         """
         try:
-            results = get_course_catalogs(site=request.site)
+            results = get_course_catalogs(site=request.site, resource_id=None)
         except:  # pylint: disable=bare-except
             logger.exception('Failed to retrieve course catalogs data from the Discovery Service API.')
             results = []
