@@ -77,7 +77,7 @@ TIME_ZONE = 'UTC'
 
 # See: https://docs.djangoproject.com/en/dev/ref/settings/#language-code
 # http://www.i18nguy.com/unicode/language-identifiers.html
-LANGUAGE_CODE = 'en'
+LANGUAGE_CODE = 'tr-tr'
 
 SITE_ID = 1
 
@@ -86,8 +86,9 @@ USE_I18N = True
 
 LANGUAGES = (
     ('en', _('English')),
-    ('es', _('Spanish')),
-    ('es-419', _('Spanish (Latin American)')),
+    # ('es', _('Spanish')),
+    # ('es-419', _('Spanish (Latin American)')),
+    ('tr-tr', _('Turkish')),
 )
 
 LOCALE_PATHS = (
