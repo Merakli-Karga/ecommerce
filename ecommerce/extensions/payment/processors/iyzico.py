@@ -63,6 +63,7 @@ class Iyzico(BasePaymentProcessor):
         bytes_data = checkout_form_auth_response.read()
         data = json.loads(bytes_data)
         if data.get('status', '') != 'success' or data.get('paymentStatus', '') != 'SUCCESS':
+            logger.warning('retrieve_payment_info failed: data={data}'.format(data=data))
             data = None
 
         return data

@@ -7,20 +7,15 @@ import logging
 import waffle
 
 from django.conf import settings
-from django.contrib.auth.decorators import login_required
 from django.db import transaction
 from django.shortcuts import redirect, render
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View, TemplateView
-from edx_rest_api_client.client import EdxRestApiClient
-from edx_rest_api_client.exceptions import SlumberHttpBaseException
 from oscar.apps.partner import strategy
 from oscar.apps.payment.exceptions import PaymentError
 from oscar.core.loading import get_class, get_model
-from requests.exceptions import Timeout
 
-from ecommerce.core.url_utils import get_lms_url
 from ecommerce.extensions.analytics.utils import parse_tracking_context
 from ecommerce.extensions.basket.utils import basket_add_organization_attribute
 from ecommerce.extensions.checkout.mixins import EdxOrderPlacementMixin
@@ -50,37 +45,14 @@ class IyzicoInitializationException(ValueError):
 
 class BasketDiscountMixin(View):
     def _add_dynamic_discount_to_request(self, basket):
-        # TODO: Remove as a part of REVMI-124 as this is a hacky solution
-        # The problem is that orders are being created after payment processing, and the discount is not
-        # saved in the database, so it needs to be calculated again in order to save the correct info to the
-        # order. REVMI-124 will create the order before payment processing, when we have the discount context.
         if waffle.flag_is_active(self.request, DYNAMIC_DISCOUNT_FLAG) and basket.lines.count() == 1:
-            discount_lms_url = get_lms_url('/api/discounts/')
-            lms_discount_client = EdxRestApiClient(discount_lms_url,
-                                                   jwt=self.request.site.siteconfiguration.access_token)
-            ck = basket.lines.first().product.course_id
-            user_id = basket.owner.lms_user_id
-            try:
-                response = lms_discount_client.user(user_id).course(ck).get()
-                self.request.GET = self.request.GET.copy()
-                self.request.GET['discount_jwt'] = response.get('jwt')
-            except (SlumberHttpBaseException, Timeout) as error:
-                logger.warning(
-                    'Failed to get discount jwt from LMS. [%s] returned [%s]',
-                    discount_lms_url,
-                    error.response)
-            # END TODO
+            raise ValueError('Iyzico payment does not support waffle {waf_name}'.format(waf_name=DYNAMIC_DISCOUNT_FLAG))
 
     def _get_basket(self, basket_id):
         basket = Basket.objects.get(pk=basket_id)
         basket.strategy = strategy.Default()
 
-        # TODO: Remove as a part of REVMI-124 as this is a hacky solution
-        # The problem is that orders are being created after payment processing, and the discount is not
-        # saved in the database, so it needs to be calculated again in order to save the correct info to the
-        # order. REVMI-124 will create the order before payment processing, when we have the discount context.
         self._add_dynamic_discount_to_request(basket)
-        # END TODO
 
         Applicator().apply(basket, basket.owner, self.request)
 
@@ -93,7 +65,6 @@ class IyzicoPaymentView(BasketDiscountMixin):
     error_template_name = 'payment/iyzico_callback_failed.html'
 
     @method_decorator(csrf_exempt)
-    @method_decorator(login_required)
     def dispatch(self, *args, **kwargs):  # pylint: disable=arguments-differ
         """
         Request needs to be csrf_exempt to handle POST back from external payment processor.
@@ -188,7 +159,10 @@ class IyzicoPaymentView(BasketDiscountMixin):
             response = self.initialize_form(
                 basket=basket,
                 lang=lang,
-                base_url='{scheme}://{domain}'.format(scheme=self.request.scheme, domain=self.request.site)
+                base_url='{scheme}://{domain}'.format(
+                    scheme=settings.DEFAULT_URL_SCHEME,
+                    domain=self.request.site
+                )
             )
         except CartLine.DoesNotExist:
             raise CartLine.DoesNotExist
@@ -256,7 +230,6 @@ class IyzicoPaymentExecutionView(EdxOrderPlacementMixin, BasketDiscountMixin):
 
     @method_decorator(transaction.non_atomic_requests)
     @method_decorator(csrf_exempt)
-    @method_decorator(login_required)
     def dispatch(self, *args, **kwargs):  # pylint: disable=arguments-differ
         """
         Request needs to be csrf_exempt to handle POST back from external payment processor.
@@ -264,15 +237,19 @@ class IyzicoPaymentExecutionView(EdxOrderPlacementMixin, BasketDiscountMixin):
         return super(IyzicoPaymentExecutionView, self).dispatch(*args, **kwargs)
 
     def post(self, request):
+        logger.info('Starting Iyzico payment execute...')
         iyzico_response = request.POST.dict()
-        token = iyzico_response.get('token', 'nothing')
-        data = self.payment_processor.retrieve_payment_info(token=token)
+        token = iyzico_response.get('token', None)
+        if token is None:
+            logger.error('IyzicoPaymentExecutionView POST called with a (None) token')
+            return redirect(self.payment_processor.error_url)
 
+        data = self.payment_processor.retrieve_payment_info(token=token)
         if data is None:
-            logger.error('No basket for given token [{token}]'.format(token=token))
             return redirect(self.payment_processor.error_url)
 
         basket_id = get_basket_id_from_iyzico_id(data['basketId'])
+        logger.info('...processing Iyzico payment for basket id [{}]'.format(basket_id))
 
         try:
             basket = self._get_basket(basket_id=basket_id)
@@ -288,6 +265,7 @@ class IyzicoPaymentExecutionView(EdxOrderPlacementMixin, BasketDiscountMixin):
         try:
             with transaction.atomic():
                 try:
+                    logger.info('...handling Iyzico payment for basket id [{}]'.format(basket_id))
                     self.handle_payment(iyzico_response, basket)
                 except PaymentError:
                     logger.exception('Payment Error for basket [{basket_id}]'.format(basket_id=basket_id))
@@ -297,6 +275,7 @@ class IyzicoPaymentExecutionView(EdxOrderPlacementMixin, BasketDiscountMixin):
             return redirect(receipt_url)
 
         try:
+            logger.info('...creating order for basket id [{}]'.format(basket_id))
             order = self.create_order(request, basket)
         except Exception:  # pylint: disable=broad-except
             # any errors here will be logged in the create_order method. If we wanted any
@@ -305,9 +284,11 @@ class IyzicoPaymentExecutionView(EdxOrderPlacementMixin, BasketDiscountMixin):
             return redirect(receipt_url)
 
         try:
+            logger.info('...handling post order process for basket id [{}]'.format(basket_id))
             self.handle_post_order(order)
         except Exception:  # pylint: disable=broad-except
             logger.exception('Error handling post order for basket [{basket_id}]'.format(basket_id=basket_id))
             self.log_order_placement_exception(basket.order_number, basket.id)
 
+        logger.info('Payment for basket id [{}] completed successfully'.format(basket_id))
         return redirect(receipt_url)

@@ -216,6 +216,7 @@ MIDDLEWARE = (
     'corsheaders.middleware.CorsMiddleware',
     'edx_django_utils.cache.middleware.RequestCacheMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'ecommerce.extensions.payment.middleware.VerifyEdxSession',
     'django.middleware.locale.LocaleMiddleware',
     'django.middleware.common.CommonMiddleware',
     'edx_rest_framework_extensions.auth.jwt.middleware.JwtRedirectToLoginIfUnauthenticatedMiddleware',
@@ -813,3 +814,5 @@ HUBSPOT_SALES_LEAD_FORM_GUID = "SET-ME-PLEASE"
 # To check government purchase restriction lists
 SDN_CHECK_API_URL ="https://api.trade.gov/gateway/v1/consolidated_screening_list/search"
 SDN_CHECK_API_KEY = "sdn search key here"
+
+DEFAULT_URL_SCHEME = 'https'
